@@ -1,111 +1,100 @@
 #include <iarduino_IR_RX.h>
 
 const int pinServo[6] = {5,6,7,8,9,10};
-const int pinSound = 11;
 const int pinIk = 12;
 long DEGREE_START = 110;        //угол начального положения серво (висит объект)
-long DEGREE_NORM = 90;          //угол крайнего положения серво, когда объект еще не падает
 long DEGREE_DROP = 0;           //угол падения объекта
-long DROP_DELAY_MAX = 1000;    //максимальное время ожидания следующего броска
+long DROP_DELAY_MAX = 10000;    //максимальное время ожидания следующего броска
 iarduino_IR_RX IR(pinIk);
 
 int modeGame;                         //Режим игры
 unsigned long timer_last_drop;        //время последнего сброса
 int countDrops;                       //счетчик бросков
-int dropList[6]={-1,-1,-1,-1,-1,-1}; //последовательность сбросов
+int dropList[6]={-1,-1,-1,-1,-1,-1};  //последовательность сбросов
 long delayBeforeNextDrop;             //текущее время до сброса
-long degree_cur = 0;                  //угол текущего состояния
+
+//коды кнопок пк:
+const int button_1 = 8160;
+const int button_2 = 2064;
+const int button_3 = 1040;
+const int button_4 = 3088;
+const int button_5 = 528;
+const int button_6 = 2576;
 
 void setup() 
 {
-  Serial.begin(9600);
   IR.begin();
   IR.protocol(IR_CLEAN);
-  pinMode(pinSound, OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
-  for(int i = 5; i <= 10; ++i){
-    pinMode(i, OUTPUT);
+  for(int i = 0; i < 6; ++i){
+    pinMode(pinServo[i], OUTPUT);
   }
-  modeGame = 0;
-  countDrops = 0;
-  playMusic(2);
-  Serial.println("HELLO! WAS STARTED...");
-
+  resetState();
 }
-//1=8160
-//2=2064
-//3=1040
-//4=3088
-//5=528
-//6=2576
 void loop() 
 {
-  if(IR.check()){
-    int irData = IR.data;
-    if(irData == 528){//5 начальное положение
-      blinkDiod();
-      setPositionAll(DEGREE_START);
-      modeGame = 0;
-      Serial.println("SET START POSITION");
-    }
-    if(irData == 8160){//1 начало игры 1
-      blinkDiod();
-      newGame();
+  if(IR.check(true)){
+    if(modeGame == 0){
+      switch(IR.data){
+        case button_1: initGame(1); break;
+        case button_2: initGame(2); break;
+        case button_3: initGame(3); break;
+        case button_5: resetState(); break;
+      }
     }
   }
-  if(modeGame == 0){
-    return;
-  }
-  if(countDrops == 6){
-    modeGame = 0;
-    Serial.println("GAME OVER!");
-    return;
-  }
-  if(isIntervalPassed(timer_last_drop, delayBeforeNextDrop)){
-    drop();
-  } else{
-    //sway();
+  if(modeGame > 0){
+    logicGame();
   }
   delay(10);
 }
-void newGame(){
-  //setPositionAll(DEGREE_START);
-  degree_cur = DEGREE_START;
+void resetState(){
+  blinkDiod();
+  modeGame = 0;
   countDrops = 0;
+  setPositionAll(DEGREE_START);
+  blinkDiod();
+}
+void initGame(int modeGameIn){
+  blinkDiod();
   timer_last_drop = millis();
   fillDropList();
-  delayBeforeNextDrop = random(1000, DROP_DELAY_MAX);
-  playMusic(2);
-  modeGame = 1;
-  Serial.println("New Game");
+  delayBeforeNextDrop = random(3000, DROP_DELAY_MAX);
+  modeGame = modeGameIn;
 }
-void sway(){
-  //Serial.println("SWAY! ");
-  if(degree_cur == DEGREE_START){
-    degree_cur = DEGREE_NORM;
-  } else {
-    degree_cur = DEGREE_START;
+void logicGame(){
+  if(countDrops == 6){
+    resetState();
+    return;
   }
-  for(int i = 0; i < countDrops; ++i){
-    servoPulse(pinServo[dropList[i]], degree_cur);
-    delay(500);
-  }
-}
-void drop(){
-    Serial.println("DROP!");
-    servoPulse(pinServo[dropList[countDrops]], DEGREE_DROP);
-    delay(2000);
-    ++countDrops;
-    delayBeforeNextDrop = random(1000, DROP_DELAY_MAX);
+  if(isIntervalPassed(timer_last_drop, delayBeforeNextDrop)){
+    servoMultiPulseFromDropList(modeGame, DEGREE_DROP);
+    countDrops = countDrops + modeGame;
+    delayBeforeNextDrop = random(3000, DROP_DELAY_MAX);
     timer_last_drop = millis();
+    delay(2000);
+  } 
+}
+
+void servoMultiPulseFromDropList(int countDropsIn, long angle) {
+  int dropFinish = countDrops + countDropsIn;
+  for (int i = 0; i <= 50; i++){
+    for(int s = countDrops; s < dropFinish; s++){
+      nextServoTick(pinServo[dropList[s]], angle);
+    }
+  }
+}
+
+void nextServoTick(int pinServo, long angle){
+  int pulseWidth = (angle * 11) + 500; 
+  digitalWrite(pinServo, HIGH);
+  delayMicroseconds(pulseWidth);
+  digitalWrite(pinServo, LOW);
+  delay(20 - pulseWidth / 1000);
 }
 void servoPulse(int pinServo, long angle) {
   for (int i = 0; i <= 50; i++){
-    int pulseWidth = (angle * 11) + 500; 
-    digitalWrite(pinServo, HIGH); // set the level of servo pin as high
-    delayMicroseconds(pulseWidth); // delay microsecond of pulse width
-    digitalWrite(pinServo, LOW); // set the level of servo pin as low
-    delay(20 - pulseWidth / 1000);
+    nextServoTick(pinServo, angle);
   }
 }
 
@@ -121,11 +110,9 @@ bool isIntervalPassed(long t1, long interval){
 }
 
 void fillDropList(){
-  Serial.println("START FILLED DROP LIST");
   for(int i = 0; i < 6; ++i){
     dropList[i]=-1;
   }
-  
   int nextValue = 0;
   randomSeed(micros());
   for(int i = 0; i < 6; ++i){
@@ -137,7 +124,6 @@ void fillDropList(){
       }
     }
   }
-  Serial.println("DROP LIST WAS FILLED");
 }
 bool valueIsExistsInDropList(int value){
   for(int i = 0; i < 6; ++i){
@@ -147,55 +133,9 @@ bool valueIsExistsInDropList(int value){
   }
   return false;
 }
-void playMusic(int countRepeat){
-  /* todo open
-  for(int i = 0; i < countRepeat; ++i){
-    analogWrite(pinSound, 500);
-    delay(300);
-    analogWrite(pinSound, 0);
-    delay(300);
-  }
-  */
-}
-
-
-//============================================================================================
 void blinkDiod(){
-  digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(1000);                       // wait for a second
-  digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-  delay(1000);                       // wait for a second
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(1000);
+  digitalWrite(LED_BUILTIN, LOW);
+  delay(1000);
 }
-/*
-void testServo(){
-  for(int i = 0; i < 6; ++i){
-    //pinServo[i].write(100);
-    delay(2000);
-    //pinServo[i].write(0);
-    delay(2000);
-    //pinServo[i].write(100);
-    delay(2000);
-  }
-}
-void testIkServo(){
-  if(IR.check()){
-    int irData = IR.data;
-    if(irData == 8160){
-      blinkDiod();
-      setPositionAll(DEGREE_DROP);
-    }
-    if(irData == 2064){
-      blinkDiod();
-      setPositionAll(DEGREE_START);
-    }
-    if(irData == 1040){
-      blinkDiod();
-      setPositionAll(DEGREE_NORM);
-    }
-   // Serial.println(IR.data);
-  } else{
-  }
-  delay(10);
-}
-}
-*/
